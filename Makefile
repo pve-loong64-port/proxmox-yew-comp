@@ -1,13 +1,16 @@
+include /usr/share/dpkg/architecture.mk
 include /usr/share/dpkg/pkg-info.mk
 
 BUILDDIR ?= build
 
+ARCH := $(DEB_BUILD_ARCH)
+
 DEBS = \
-    librust-proxmox-yew-comp+apt-dev_$(DEB_VERSION)_amd64.deb \
-    librust-proxmox-yew-comp+dns-dev_$(DEB_VERSION)_amd64.deb \
-    librust-proxmox-yew-comp+network-dev_$(DEB_VERSION)_amd64.deb \
-    librust-proxmox-yew-comp+rrd-dev_$(DEB_VERSION)_amd64.deb \
-    librust-proxmox-yew-comp-dev_$(DEB_VERSION)_amd64.deb \
+    librust-proxmox-yew-comp+apt-dev_$(DEB_VERSION)_$(ARCH).deb \
+    librust-proxmox-yew-comp+dns-dev_$(DEB_VERSION)_$(ARCH).deb \
+    librust-proxmox-yew-comp+network-dev_$(DEB_VERSION)_$(ARCH).deb \
+    librust-proxmox-yew-comp+rrd-dev_$(DEB_VERSION)_$(ARCH).deb \
+    librust-proxmox-yew-comp-dev_$(DEB_VERSION)_$(ARCH).deb \
 
 BUILD_DEBS = $(addprefix $(BUILDDIR)/,$(DEBS))
 
