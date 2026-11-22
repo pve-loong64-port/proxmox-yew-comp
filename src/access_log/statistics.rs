@@ -374,7 +374,10 @@ fn stats_table(
                                 event.stop_propagation();
                                 on_activate.emit(fields.clone());
                             };
-                            html! {<a href="#" {onclick}>{text}</a>}
+                            // fill the cell, as values like '-' or '/' are hard to hit otherwise
+                            html! {
+                                <a href="#" class="pwt-d-block pwt-text-truncate" {onclick}>{text}</a>
+                            }
                         }
                         None => html! {text},
                     }
