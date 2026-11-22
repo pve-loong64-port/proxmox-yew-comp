@@ -19,7 +19,9 @@ use pwt::widget::form::{
     Checkbox, Combobox, DateField, Field, Form, FormContext, InputType, PlainDate,
 };
 use pwt::widget::menu::{Menu, MenuButton, MenuItem};
-use pwt::widget::{Button, Column, Container, Dialog, Mask, SegmentedButton, Toolbar, Tooltip};
+use pwt::widget::{
+    Button, Column, Container, Dialog, Mask, SegmentedButton, Toolbar, Tooltip, Trigger,
+};
 
 use pwt_macros::builder;
 
@@ -991,6 +993,11 @@ impl LoadableComponent for ProxmoxAccessLog {
             .get_field_text("path-group")
             .is_empty();
         let label = |text: String| html! {<div class="pwt-text-align-end">{text}</div>};
+        let method_set = !self
+            .filter_form_context
+            .read()
+            .get_field_text("method")
+            .is_empty();
         let filter = Container::new()
             .key("filter")
             .class(filter_classes)
@@ -1035,7 +1042,21 @@ impl LoadableComponent for ProxmoxAccessLog {
                             .into_iter()
                             .map(AttrValue::from)
                             .collect(),
-                    )),
+                    ))
+                    // the selector adds a clear trigger only to fields that are not editable
+                    .with_trigger(
+                        Trigger::new(if method_set { "fa fa-times" } else { "" })
+                            .tip(tr!("Clear Value"))
+                            .on_activate({
+                                let form_context = self.filter_form_context.clone();
+                                move |_| {
+                                    form_context
+                                        .write()
+                                        .set_field_value("method", "".into())
+                                }
+                            }),
+                        true,
+                    ),
             )
             .with_child(label(tr!("Path")))
             .with_child(
