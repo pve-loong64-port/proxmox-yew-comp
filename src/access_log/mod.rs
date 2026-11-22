@@ -1027,7 +1027,7 @@ impl LoadableComponent for ProxmoxAccessLog {
                                 .name("auth-id-exact")
                                 .box_label(tr!("Exact match")),
                         )
-                        .tip(tr!("Only the user itself, not its API tokens.")),
+                        .tip(tr!("Match the whole user or API token, not just a part of it.")),
                     ),
             )
             .with_child(label(tr!("Method")))
