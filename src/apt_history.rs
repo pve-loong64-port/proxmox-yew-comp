@@ -3,6 +3,8 @@ use std::pin::Pin;
 use std::rc::Rc;
 
 use anyhow::Error;
+use gloo_timers::callback::Timeout;
+use serde_json::json;
 
 use yew::html::IntoPropValue;
 use yew::virtual_dom::{Key, VComp, VNode};
@@ -11,7 +13,7 @@ use pwt::css::{
     AlignItems, FlexWrap, FontColor, JustifyContent, Opacity, OverflowY, UserSelect, WhiteSpace,
 };
 use pwt::prelude::*;
-use pwt::props::{FilterFn, RenderFn};
+use pwt::props::{FilterFn, IntoVTag, RenderFn};
 use pwt::state::{Selection, Store};
 use pwt::widget::data_table::{
     DataTable, DataTableColumn, DataTableHeader, DataTableHeaderGroup, DataTableMouseEvent,
@@ -42,6 +44,9 @@ async fn list_history(base_url: AttrValue) -> Result<Vec<HistoryEntry>, Error> {
     let url = format!("{base_url}/history");
     crate::http_get(url, None).await.map_err(api_error_message)
 }
+
+/// How often the newest transaction gets checked while it runs.
+const POLL_INTERVAL_MS: u32 = 5000;
 
 /// Turns an API error into its message, without the status code that [`proxmox_client::Error`]
 /// adds, so that the views show the reason as the API phrased it, for example for a remote running
@@ -112,7 +117,9 @@ impl Filters {
             StatusFilter::All => true,
             StatusFilter::Ok => entry.error.is_none() && entry.end_time.is_some(),
             StatusFilter::Failed => entry.error.is_some(),
-            StatusFilter::Interrupted => entry.error.is_none() && entry.end_time.is_none(),
+            StatusFilter::Interrupted => {
+                entry.error.is_none() && entry.end_time.is_none() && entry.running != Some(true)
+            }
         };
         // the timestamps are milliseconds, the until date includes the whole day
         let start = entry.start_time as f64 * 1000.0;
@@ -167,6 +174,8 @@ pub enum Msg {
     Until(Option<PlainDate>),
     ShowTermLog,
     HistoryLoaded,
+    Poll,
+    Polled(Result<Vec<HistoryEntry>, Error>),
     Resize(f64),
     ExpandCommand(bool),
     SummaryResize,
@@ -198,6 +207,10 @@ pub struct ProxmoxAptHistory {
     command_id: AttrValue,
     command_ref: NodeRef,
     command_toggle_ref: NodeRef,
+    /// Checks the running transaction, dropping it cancels that.
+    poll: Option<Timeout>,
+    /// The transaction list, to check whether the history shows.
+    history_ref: NodeRef,
 }
 
 pwt::impl_deref_mut_property!(ProxmoxAptHistory, state, LoadableComponentState<ViewState>);
@@ -242,6 +255,8 @@ impl LoadableComponent for ProxmoxAptHistory {
             command_id: AttrValue::from(get_unique_element_id()),
             command_ref: NodeRef::default(),
             command_toggle_ref: NodeRef::default(),
+            poll: None,
+            history_ref: NodeRef::default(),
         }
     }
 
@@ -306,7 +321,48 @@ impl LoadableComponent for ProxmoxAptHistory {
                 self.clear_hidden_selection();
                 self.generation += 1;
                 self.show_details();
+                self.poll = self.running().is_some().then(|| Self::poll_later(ctx));
                 true
+            }
+            // While the newest transaction runs, only it gets checked for changes, which reads less
+            // of the logs, and the whole history reloads once it changed, for example finished.
+            Msg::Poll => {
+                // check later while hidden, like in another tab, or still loading
+                if !self.shown() || self.loading() {
+                    self.poll = Some(Self::poll_later(ctx));
+                    return false;
+                }
+                let url = format!("{}/history", ctx.props().base_url);
+                let link = ctx.link().clone();
+                wasm_bindgen_futures::spawn_local(async move {
+                    let result = crate::http_get(url, Some(json!({ "limit": 1 }))).await;
+                    link.send_message(Msg::Polled(result));
+                });
+                false
+            }
+            Msg::Polled(result) => {
+                // a reload meanwhile already showed it ending
+                let Some(running) = self.running() else {
+                    self.poll = None;
+                    return false;
+                };
+                // also after starting a reload, until one succeeds and replaces this, as one
+                // that fails, for example while the node is busy, would not check again
+                self.poll = Some(Self::poll_later(ctx));
+                let unchanged = result.is_err()
+                    || result.is_ok_and(|entries| {
+                        entries.first().is_some_and(|polled| {
+                            (polled.start_time, polled.start_index)
+                                == (running.start_time, running.start_index)
+                                && polled.end_time.is_none()
+                                && polled.error.is_none()
+                                && polled.running == Some(true)
+                        })
+                    });
+                if !unchanged {
+                    ctx.link().send_reload();
+                }
+                false
             }
             Msg::Resize(width) => {
                 let stacked = width < STACK_BELOW_WIDTH;
@@ -573,7 +629,7 @@ impl LoadableComponent for ProxmoxAptHistory {
         let split = SplitPane::new()
             .class("pwt-flex-fit")
             .vertical(self.stacked)
-            .with_child(Pane::new(history).flex(1))
+            .with_child(Pane::new(history.into_html_with_ref(self.history_ref.clone())).flex(1))
             .with_child(Pane::new(details).flex(1));
         SizeObserver::new(
             Column::new().class("pwt-flex-fit").with_child(split),
@@ -613,6 +669,7 @@ impl LoadableComponent for ProxmoxAptHistory {
             self.store.clear();
             self.selection.clear();
             self.expanded_command = None;
+            self.poll = None;
             self.show_details();
             ctx.link().send_reload();
         }
@@ -651,6 +708,31 @@ impl ProxmoxAptHistory {
         if self.clear_hidden_selection() {
             self.show_details();
         }
+    }
+
+    /// The transaction that the API reports as running, which is the newest one in the log, also
+    /// if the filters hide it.
+    fn running(&self) -> Option<HistoryEntry> {
+        self.store
+            .read()
+            .data()
+            .iter()
+            .find(|entry| entry.running == Some(true))
+            .cloned()
+    }
+
+    /// Whether the transaction list shows, so not in a hidden tab or browser page.
+    fn shown(&self) -> bool {
+        !gloo_utils::document().hidden()
+            && self
+                .history_ref
+                .cast::<web_sys::HtmlElement>()
+                .is_some_and(|element| element.offset_parent().is_some())
+    }
+
+    fn poll_later(ctx: &LoadableComponentContext<Self>) -> Timeout {
+        let link = ctx.link().clone();
+        Timeout::new(POLL_INTERVAL_MS, move || link.send_message(Msg::Poll))
     }
 
     /// Clears the selection of a transaction that the filters hide, so that its details are not
@@ -1017,14 +1099,20 @@ fn render_with_tooltip(text: &str) -> Html {
 }
 
 fn render_status(entry: &HistoryEntry) -> Html {
-    let (status, text) = match (&entry.error, entry.end_time) {
-        (Some(error), _) => (Status::Error, error.clone()),
-        (None, None) => (Status::Warning, tr!("Interrupted or still running")),
-        (None, Some(_)) => (Status::Success, tr!("OK")),
+    let (icon, text) = match (&entry.error, entry.end_time, entry.running) {
+        (Some(error), _, _) => (Fa::from(Status::Error), error.clone()),
+        (None, Some(_), _) => (Fa::from(Status::Success), tr!("OK")),
+        (None, None, Some(true)) => (Fa::new("spinner").pulse(), tr!("Running")),
+        (None, None, Some(false)) => (Fa::from(Status::Warning), tr!("Interrupted")),
+        // from a version that cannot tell
+        (None, None, None) => (
+            Fa::from(Status::Warning),
+            tr!("Interrupted or still running"),
+        ),
     };
     html! {
         <span class="pwt-text-truncate" title={text.clone()}>
-            {Fa::from(status).padding_end(2)}{text}
+            {icon.padding_end(2)}{text}
         </span>
     }
 }

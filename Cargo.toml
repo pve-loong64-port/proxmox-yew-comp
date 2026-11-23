@@ -89,7 +89,7 @@ proxmox-auth-api = { version = "1", default-features = false, features = [
   "api-types",
 ] }
 proxmox-apt-api-types = { version = "3.0", optional = true }
-proxmox-apt-history = { version = "0.1", default-features = false, features = [
+proxmox-apt-history = { version = "0.1.2", default-features = false, features = [
   "api-types",
 ], optional = true }
 proxmox-deb-changelog = { version = "0.1", optional = true }
