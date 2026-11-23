@@ -6,9 +6,9 @@ use serde_json::json;
 use yew::html::{IntoEventCallback, IntoPropValue};
 use yew::virtual_dom::{Key, VComp, VNode};
 
-use pwt::css::AlignItems;
+use pwt::css::{AlignItems, Opacity};
 use pwt::prelude::*;
-use pwt::state::Loader;
+use pwt::state::{Loader, Store};
 use pwt::widget::form::Combobox;
 use pwt::widget::{error_message, Button, Column, Container, Dialog, Row, Toolbar};
 
@@ -97,13 +97,18 @@ pub struct ProxmoxPackageChangelog {
 }
 
 impl ProxmoxPackageChangelog {
+    /// A From or To selector, `usable` tells whether a version can form a range with the other
+    /// one, and `unusable_text` why not.
     fn version_selector(
         &self,
         label: String,
         value: &str,
         placeholder: String,
+        usable: impl Fn(&str) -> bool + 'static,
+        unusable_text: String,
         on_change: Callback<String>,
     ) -> Html {
+        let usable = Rc::new(usable);
         Row::new()
             .gap(1)
             .class(AlignItems::Center)
@@ -115,6 +120,27 @@ impl ProxmoxPackageChangelog {
                     .items(self.versions.clone())
                     .value(AttrValue::from(value.to_owned()))
                     .placeholder(placeholder)
+                    // greys out the versions that cannot form a range with the other one
+                    .render_value({
+                        let usable = usable.clone();
+                        move |version: &AttrValue| -> Html {
+                            if usable(version) {
+                                html! {version}
+                            } else {
+                                Container::new()
+                                    .class(Opacity::Half)
+                                    .with_child(version)
+                                    .into()
+                            }
+                        }
+                    })
+                    .validate(move |(version, _): &(String, Store<AttrValue>)| {
+                        if usable(version) {
+                            Ok(())
+                        } else {
+                            Err(Error::msg(unusable_text.clone()))
+                        }
+                    })
                     .on_change(on_change),
             )
             .into()
@@ -127,6 +153,9 @@ impl ProxmoxPackageChangelog {
         };
         let shown: Vec<&ChangelogEntry> = range.select(entries).collect();
         if shown.is_empty() {
+            if !forms_range(&self.since, &self.to) {
+                return tr!("The From version must be older than the To version.").into();
+            }
             return empty_changelog_text().into();
         }
 
@@ -179,6 +208,15 @@ fn first_part(entries: &[&ChangelogEntry]) -> usize {
 /// An empty version selection does not limit the versions.
 fn version_limit(version: &str) -> Option<&str> {
     Some(version.trim()).filter(|version| !version.is_empty())
+}
+
+/// Whether the From version is older than the To version, so that they form a range, also if
+/// either is empty or invalid, which the range reports itself.
+fn forms_range(since: &str, to: &str) -> bool {
+    let (Some(since), Some(to)) = (version_limit(since), version_limit(to)) else {
+        return true;
+    };
+    VersionRange::new(Some(since), Some(to)).map_or(true, |range| range.contains(to))
 }
 
 impl Component for ProxmoxPackageChangelog {
@@ -234,12 +272,22 @@ impl Component for ProxmoxPackageChangelog {
                 tr!("From"),
                 &self.since,
                 tr!("Oldest"),
+                {
+                    let to = self.to.clone();
+                    move |since: &str| forms_range(since, &to)
+                },
+                tr!("The From version must be older than the To version."),
                 ctx.link().callback(Msg::Since),
             ))
             .with_child(self.version_selector(
                 tr!("To"),
                 &self.to,
                 tr!("Newest"),
+                {
+                    let since = self.since.clone();
+                    move |to: &str| forms_range(&since, to)
+                },
+                tr!("The To version must be newer than the From version."),
                 ctx.link().callback(Msg::To),
             ));
 
