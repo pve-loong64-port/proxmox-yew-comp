@@ -1,3 +1,20 @@
+rust-proxmox-yew-comp (0.8.28) trixie; urgency=medium
+
+  * access log:
+    - add a clear button to the method filter, which before could only be
+      cleared by deleting its text.
+    - the user filter matches any user or API token containing the text, if
+      the server supports that, and the exact match option compares the whole
+      ID.
+    - statistics: let the link of a value fill its whole cell, so that short
+      values like '-' for requests without a user or '/' are easy to click.
+
+  * firewall: no longer label the nftables-based firewall of Proxmox VE as a
+    technology preview in the host firewall options, as it is not
+    experimental anymore. It stays opt-in.
+
+ -- Proxmox Support Team <support@proxmox.com>  Mon, 23 Nov 2026 01:38:44 +0100
+
 rust-proxmox-yew-comp (0.8.27) trixie; urgency=medium
 
   * access log: add a view of a node's API access log behind the new
