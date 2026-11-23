@@ -1,3 +1,18 @@
+rust-proxmox-yew-comp (0.8.29) trixie; urgency=medium
+
+  * apt history:
+    - show whether a transaction without end time is still running or got
+      interrupted, if the node can tell, instead of leaving both open.
+    - while a transaction runs, check it every five seconds and reload the
+      history once it ended, so that its end shows up without reloading by
+      hand.
+
+  * apt: changelog: grey out the From and To versions that cannot form a range
+    with the other one, and explain an empty result for such a range instead
+    of suggesting that the installed changelog lacks its entries.
+
+ -- Proxmox Support Team <support@proxmox.com>  Mon, 23 Nov 2026 03:48:39 +0100
+
 rust-proxmox-yew-comp (0.8.28) trixie; urgency=medium
 
   * access log:
